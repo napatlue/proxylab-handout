@@ -1,6 +1,7 @@
 /*
  * Author: Napat Luevisadpaibul
  * Andrew Id: nluevisa
+ * Proxy with no cache version 
  */
 
 #include <stdio.h>
@@ -31,56 +32,52 @@ sem_t mutex;
 void doit(int clientfd);                          // function to interact with server and client
 void clienterror(int, char*, char*, char*, char*);
 void get_url_info(char* url, char* p_port, char* host, char* uri); //parse request from client in url form
-//void parse_build_requesthead(rio_t*, char*);
 void* thread(void* vargp);
 struct hostent *ts_gethostbyname(const char* name);  // thread-safe version of gethostbyname
 
 int ts_open_serverfd(char *hostname, int port, int fd);
 void build_header(rio_t* rp, char* header, char* hostname);
 
-ssize_t Rio_readlineb_w(rio_t *rp, void *usrbuf, size_t maxlen);
-int Rio_writen_w(int fd, void *usrbuf, size_t n);
-ssize_t Rio_readnb_w(rio_t *rp, void *usrbuf, size_t n);
-int forwardResponseHeader(rio_t *rio_server, int clientfd, int *statusCode, int *contentLength);
-int forwardPayload(rio_t *rio_server, int clientfd, int contentLength);
+/* my wrapper function for robust read write */
+ssize_t Rio_readlineb_wrapper(rio_t *rp, void *usrbuf, size_t maxlen);
+int Rio_writen_wrapper(int fd, void *usrbuf, size_t n);
+ssize_t Rio_readnb_wrapper(rio_t *rp, void *usrbuf, size_t n);
 
 
-int forwardResponseHeader(rio_t *rio_server, int clientfd, int *statusCode, int *contentLength){
+int forwardResponseHeader(rio_t *rio_server, int clientfd);
+void forwardPayload(rio_t *rio_server, int clientfd);
+
+
+/* function to send response header from server to client */
+int forwardResponseHeader(rio_t *rio_server, int clientfd){
 	char buf[MAXLINE];
 	int n;
     
 	strcpy(buf, "\0"); // Initialize buffer
     
 	while ( strcmp(buf, "\r\n") != 0)	{
-		if ( (n = Rio_readlineb_w(rio_server, buf, MAXLINE)) == 0)
+		if ( (n = Rio_readlineb_wrapper(rio_server, buf, MAXLINE)) == 0)
 			return 1;
-		Rio_writen_w(clientfd, buf, n);
-		Fputs(buf, stdout);
+		Rio_writen_wrapper(clientfd, buf, n);
+		dbg_printf("%s\n",buf);
         
-		// Parse status code and content length
-		sscanf(buf, "HTTP/1.1 %d", statusCode);
-		sscanf(buf, "Content-Length: %d", contentLength);
-	}
+    }
     
 	return 1;
 }
 
-
-int forwardPayload(rio_t *rio_server, int clientfd, int contentLength){
+/* function to forward response payload from server to client */
+void forwardPayload(rio_t *rio_server, int clientfd){
 	char buf[MAXLINE];
 	int n;
     
-	if (contentLength > 0 ){
 
-		while ( (n = Rio_readnb_w(rio_server, buf, MIN(MAXLINE, contentLength))) > 0 ){
-			Rio_writen_w(clientfd, buf, n);
-			contentLength -= n;
-		}
-	}
-	else {
-        fprintf(stderr, "Empty payload\n");
-	}
-	return 1;
+    while ( (n = Rio_readnb_wrapper(rio_server, buf, MAXLINE)) > 0 ){
+			Rio_writen_wrapper(clientfd, buf, n);
+            dbg_printf("%s\n",buf);
+    }
+	
+
 }
 
 /*
@@ -151,7 +148,11 @@ void build_header(rio_t* rp, char* header, char* hostname)
 	sprintf(header, "%s\r\n", header);
 }
 
-
+/*
+ *  This is thread-safe version of open_clientfd. I rename it because I intend to use it to connect to server.
+ *
+ *
+ */
 int ts_open_serverfd(char *hostname, int port, int fd)
 {
     int clientfd;
@@ -194,7 +195,6 @@ void* thread(void* vargp)
 	dbg_printf("Spawn thread with connfd: %d\n",connfd);
     
     Free(vargp);
-	//doit(connfd, p_Cache);
 	doit(connfd);
     Close(connfd);
 	return NULL;
@@ -216,24 +216,17 @@ void doit(int clientfd)
 	char request_line[MAXLINE] = ""; //request_line built by proxy that will be sent to server
 	char request_header[MAXLINE] = ""; // header bulit by proxy that will be sent to server
 	char request_port[10] = ""; // client assigns a port
-	//char version[] = "HTTP/1.0";
+
 	//char save_buf[MAX_OBJECT_SIZE + 1] = ""; // save temp_data from server, no bigger than MAX_OBJ_SIZE
 	int serverfd, port;
 	//int read_size;
-	int statusCode, contentLength;
+	//int statusCode, contentLength;
 
-	//Cache* p_is_hit; // if hit cache, this pointer holds the addrress of cache_block; if not hit, return NULL
 	
     /* Read request from client */
     Rio_readinitb(&rio_client, clientfd);
-	/*
-    if(rio_readlineb(&rio_client, buf, MAXLINE) < 0)
-	{
-		fprintf(stderr, "rio_readlineb error: %s\n",strerror(errno));
-		return;
-	}
-     */
-    if ( (Rio_readlineb_w(&rio_client, buf, MAXLINE)) == 0)
+
+    if ( (Rio_readlineb_wrapper(&rio_client, buf, MAXLINE)) == 0)
     {
 		return;
     }
@@ -251,17 +244,16 @@ void doit(int clientfd)
     port = !strlen(request_port) ? 80 : atoi(request_port);
 	sprintf(url,"%s:%d%s", hostname, port, uri); // rebuild url, using url as a key to search cache
     dbg_printf("URL:%s \n",url);
-    //fprintf(stderr, "url: %s\n",url);
-	//if( Search_and_Transfer(url, p_Cache,fd,(void**)&p_is_hit) < 0)
-	//	return;
+
+    //for this version cache always miss
 	if(!cache_hit) // if not hit cache, proxy connect to server, receive and build cache block
 	{
 		fprintf(stderr ,"miss\n");
 		sprintf(request_line, "%s %s %s\r\n", method, uri, version); // build request line
 		build_header(&rio_client, request_header, hostname);
         
-        fprintf(stderr ,"Request line %s\n",request_line);
-        fprintf(stderr ,"Header %s\n",request_header);
+        dbg_printf("Request line %s\n",request_line);
+        dbg_printf("Header %s\n",request_header);
         if((serverfd = ts_open_serverfd(hostname, port, clientfd)) < 0)
         {
 			return;
@@ -283,54 +275,15 @@ void doit(int clientfd)
         
 		Rio_readinitb(&rio_server, serverfd);
         
-        if (!forwardResponseHeader(&rio_server, clientfd, &statusCode, &contentLength)){
+        if (!forwardResponseHeader(&rio_server, clientfd)){
             Close(serverfd);
             return;
         }
         
         dbg_printf("-------------Begin forward response payload\n\n");
-        if (statusCode == 200){
-            forwardPayload(&rio_server, clientfd, contentLength);
-        }
+        forwardPayload(&rio_server, clientfd);
         
         
-		/* get server's response and save in save_buf temporarily */
-        //		int total_size = 0;
-		/*
-        if((read_size = rio_readnb(&rio, response, MAXBUF)) > 0)
-		{
-			dbg_printf("response: %s\n",response);
-            
-            if(read_size <= MAX_OBJECT_SIZE) // object should be cached and send back to client
-			{
-				fprintf(stderr, "cache!\n");
-				if(rio_writen(clientfd, save_buf, read_size) < 0) // sent back to client
-				{
-                    Close(serverfd);
-					return;
-				}
-                dbg_printf("save buffer: %s\n",save_buf);
-				//Write_and_Update(p_Cache, read_size, url, save_buf); // write to cache and update access time
-			}
-			else // should not cache, transfer it to client directly
-			{
-				fprintf(stderr, "not cache!\n");
-				if(rio_writen(clientfd, save_buf, read_size) < 0)
-				{
-					Close(serverfd);
-					return;
-				}
-				while((read_size = rio_readnb(&rio, save_buf, MAX_OBJECT_SIZE+1)) > 0)
-                {
-					if(rio_writen(clientfd, save_buf, read_size) < 0)
-					{
-                        break;
-                    }
-                    dbg_printf("save buffer: %s\n",save_buf);
-                }
-			}
-		}
-         */
 		Close(serverfd);
 	}
 
@@ -341,7 +294,7 @@ void doit(int clientfd)
 void get_url_info(char* url, char* p_port, char* host, char* uri)
 {
 	char* ptr, *p;
-	if((ptr = strstr(url, "://")) == NULL) // if brower doesn't append http:// head, append it manually
+	if((ptr = strstr(url, "://")) == NULL) // auto append http://
 	{
 		char temp[MAXLINE];
 		strcpy(temp, "http://");
@@ -351,7 +304,7 @@ void get_url_info(char* url, char* p_port, char* host, char* uri)
 	}
 	ptr += 3; // cut http:// from request line
 	url = ptr;
-	if((ptr = strstr(url, "/")) == NULL) // if brower doesn't append '/', then append it manually
+	if((ptr = strstr(url, "/")) == NULL) // auto applend /
 	{
 		size_t len = strlen(url);
 		url[len] = '/';
@@ -362,14 +315,14 @@ void get_url_info(char* url, char* p_port, char* host, char* uri)
 	while(*(p + 1) == '/'){
 		p += 1;
 	}
-	strcpy(uri, p); // construct uri
+	strcpy(uri, p); // get uri
 	*ptr = '\0';
-	if((ptr = strstr(url, ":")) != NULL) // if client provide a port
+	if((ptr = strstr(url, ":")) != NULL) // get port
 	{
 		*ptr = '\0';
 		strcpy(p_port, ptr+1);
 	}
-	strcpy(host, url); // get Host: www.cmu.edu
+	strcpy(host, url); // get host
 }
 
 int main(int argc, char* argv[])
@@ -392,34 +345,18 @@ int main(int argc, char* argv[])
     Signal(SIGPIPE, SIG_IGN);
  
     
-	/* construct and initialize header of cache linked list */
-    
-	/*
-    Cache* p_Cache = Malloc(sizeof(struct Cache));
-	p_Cache->obj_size = 0;
-	p_Cache->last_access = 0;
-	p_Cache->p_url = NULL;
-	p_Cache->p_next = NULL;
-	p_Cache->response_body = NULL;
-    */
-    
 	Sem_init(&mutex,0,1); // use binary semaphore
-	/*
-    Sem_init(&w_mutex,0,1);
-	Sem_init(&cnt_mutex,0,1);
-	Sem_init(&mtime_mutex,0,1);
-    */
+
 	port = atoi(argv[1]);
 	dbg_printf("Port: %d\n",port);
     clientlen = sizeof(clientaddr);
     
 	listenfd = Open_listenfd(port);
     dbg_printf("listenfd: %d\n",listenfd);
-	//main_args* p_arg;
+
 	while(1)
 	{
-		//p_arg = Malloc(sizeof(struct main_args));
-		//(*p_arg).p_Cache = p_Cache;
+
 		connfdp = Malloc(sizeof(int));
         *connfdp = Accept(listenfd, (SA*)&clientaddr, &clientlen);
 		Pthread_create(&tid, NULL, thread, connfdp);
@@ -468,37 +405,37 @@ struct hostent *ts_gethostbyname(const char* name)
     return result;
 }
 
-ssize_t Rio_readlineb_w(rio_t *rp, void *usrbuf, size_t maxlen)
+ssize_t Rio_readlineb_wrapper(rio_t *rp, void *usrbuf, size_t maxlen)
 {
 	ssize_t rc;
     
 	if (( rc = rio_readlineb(rp, usrbuf, maxlen )) < 0)
 	{
-		printf("Rio_readlineb_w error!\n");
-		return 0; // Return EOF if error
+		printf("Rio_readlineb_wrapper error!\n");
+		return 0;
 	}
     
 	return rc;
 }
 
-int Rio_writen_w(int fd, void *usrbuf, size_t n)
+int Rio_writen_wrapper(int fd, void *usrbuf, size_t n)
 {
 	if (rio_writen(fd, usrbuf, n) != n)
 	{
-		printf("Rio_writen_w error!\n");
+		printf("Rio_writen_wrapper error!\n");
 		return 0;
 	}
     
 	return 1;
 }
 
-ssize_t Rio_readnb_w(rio_t *rp, void *usrbuf, size_t n_size)
+ssize_t Rio_readnb_wrapper(rio_t *rp, void *usrbuf, size_t n_size)
 {
 	ssize_t rc;
     
 	if ( (rc = rio_readnb(rp, usrbuf, n_size)) < 0)
 	{
-		printf("Rio_readnb_w error!\n");
+		printf("Rio_readnb_wrapper error!\n");
 		return 0;
 	}
     

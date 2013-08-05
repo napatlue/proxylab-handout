@@ -6,10 +6,11 @@
 
 #include <stdio.h>
 #include "csapp.h"
+#include "cache.h"
 #define MAX_CACHE_SIZE 1049000
 #define MAX_OBJECT_SIZE 102400
 
-#define DEBUG
+//#define DEBUG
 #ifdef DEBUG
 # define dbg_printf(...) printf(__VA_ARGS__)
 #else
@@ -25,7 +26,7 @@ static const char *accept_encoding = "Accept-Encoding: gzip, deflate\r\n";
 
 static const char *version = "HTTP/1.0";
 sem_t mutex;
-
+extern pthread_rwlock_t lock;
 
 /* My function prototypes */
 //void doit(int, struct Cache*);
@@ -45,13 +46,13 @@ ssize_t Rio_readnb_wrapper(rio_t *rp, void *usrbuf, size_t n);
 
 
 int forwardResponseHeader(rio_t *rio_server, int clientfd);
-void forwardPayload(rio_t *rio_server, int clientfd);
+int forwardPayload(rio_t *rio_server, int clientfd, char* object);
 
 
 /* function to send response header from server to client */
 int forwardResponseHeader(rio_t *rio_server, int clientfd){
 	char buf[MAXLINE];
-	int n;
+	unsigned long n;
     
 	strcpy(buf, "\0"); // Initialize buffer
     
@@ -66,17 +67,29 @@ int forwardResponseHeader(rio_t *rio_server, int clientfd){
 	return 1;
 }
 
-/* function to forward response payload from server to client */
-void forwardPayload(rio_t *rio_server, int clientfd){
+/* function to forward response payload from server to client. Also return whether object size exceed threshold */
+int forwardPayload(rio_t *rio_server, int clientfd, char* object){
 	char buf[MAXLINE];
-	int n;
-    
+	unsigned long n,size=0;
+    //char object[MAX_OBJECT_SIZE];
 
-    while ( (n = Rio_readnb_wrapper(rio_server, buf, MAXLINE)) > 0 ){
-			Rio_writen_wrapper(clientfd, buf, n);
-            dbg_printf("%s\n",buf);
+    int exceed = 0;
+    while ( (n = Rio_readnb_wrapper(rio_server, buf, MAXLINE)) > 0){
+        Rio_writen_wrapper(clientfd, buf, n);
+        dbg_printf("%s\n",buf);
+        
+        size += n;
+        if(size <= MAX_OBJECT_SIZE)
+        {
+            strcat(object, buf);
+        }
+        else
+        {
+            exceed = 1;
+        }
+        
     }
-	
+	return exceed;
 
 }
 
@@ -205,13 +218,15 @@ void* thread(void* vargp)
  */
 void doit(int clientfd)
 {
-	int cache_hit = 0;
-    
+	//int cache_hit = 0;
+    print_cache();
     rio_t rio_client, rio_server;
 	
 	char buf[MAXLINE], method[10], url[MAXLINE], uri[MAXLINE];
     char hostname[MAXLINE];
+    char object[MAX_OBJECT_SIZE];
     //char response[MAXBUF];
+    char *data_cache = NULL;
 
 	char request_line[MAXLINE] = ""; //request_line built by proxy that will be sent to server
 	char request_header[MAXLINE] = ""; // header bulit by proxy that will be sent to server
@@ -221,7 +236,7 @@ void doit(int clientfd)
 	int serverfd, port;
 	//int read_size;
 	//int statusCode, contentLength;
-
+    int exceed;
 	
     /* Read request from client */
     Rio_readinitb(&rio_client, clientfd);
@@ -244,11 +259,27 @@ void doit(int clientfd)
     port = !strlen(request_port) ? 80 : atoi(request_port);
 	sprintf(url,"%s:%d%s", hostname, port, uri); // rebuild url, using url as a key to search cache
     dbg_printf("URL:%s \n",url);
+    
+    dbg_printf("------search in cache with key %s\n",url);
+    fprintf(stderr ,"bf get data\n");
+    print_cache();
+    data_cache=Get_data(url);
+    if(data_cache != NULL && strlen(data_cache) != 0)
+    {
+        
+        dbg_printf("cache hit \n");
+        fprintf(stderr ,"cache hit\n");
+        //dbg_printf("------------------data poniter\n\n%p\n\n",data_cache);
+        dbg_printf("------------------------Object\n\n%s\n\n",data_cache);
 
-    //for this version cache always miss
-	if(!cache_hit) // if not hit cache, proxy connect to server, receive and build cache block
+        
+        Rio_writen_wrapper(clientfd, data_cache, strlen(data_cache));
+    }
+	else // if not cache hit, proxy connect to server, receive and build cache block
 	{
-		fprintf(stderr ,"miss\n");
+		dbg_printf("cache miss \n");
+        fprintf(stderr ,"cache miss\n");
+        //fprintf(stderr ,"miss\n");
 		sprintf(request_line, "%s %s %s\r\n", method, uri, version); // build request line
 		build_header(&rio_client, request_header, hostname);
         
@@ -281,9 +312,22 @@ void doit(int clientfd)
         }
         
         dbg_printf("-------------Begin forward response payload\n\n");
-        forwardPayload(&rio_server, clientfd);
+        exceed = forwardPayload(&rio_server,clientfd,object);
         
+        if(!exceed) //within maximum object size, insert data to cache
+        {
+             dbg_printf("-------------With in maximum object size\n\n");
+            dbg_printf("-------------url%s",url);
+            dbg_printf("-------------Object%s",object);
+            fprintf(stderr ,"-------------url%s",url);
+            fprintf(stderr ,"-------------Object%ld",strlen(object));
+            Insert_atfront(url, object);
+            print_cache();
+            fprintf(stderr ,"end cache miss");
+        }
         
+        print_cache();
+        fprintf(stderr ,"bf close serverfd");
 		Close(serverfd);
 	}
 
@@ -346,6 +390,7 @@ int main(int argc, char* argv[])
  
     
 	Sem_init(&mutex,0,1); // use binary semaphore
+    pthread_rwlock_init(&lock, NULL); //init read write lock
 
 	port = atoi(argv[1]);
 	dbg_printf("Port: %d\n",port);

@@ -2,15 +2,9 @@ CC = gcc
 CFLAGS = -g -Wall
 LDFLAGS = -lpthread
 
-all: proxy
+all:
 
-csapp.o: csapp.c csapp.h
-	$(CC) $(CFLAGS) -c csapp.c
-
-proxy.o: proxy.c csapp.h
-	$(CC) $(CFLAGS) -c proxy.c
-
-proxy: proxy.o csapp.o
+	gcc -g -Wall proxy.c cache.c csapp.c -lpthread -o proxy
 
 submit:
 	(make clean; cd ..; tar cvf proxylab.tar proxylab-handout)

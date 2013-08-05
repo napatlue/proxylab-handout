@@ -654,7 +654,7 @@ ssize_t rio_readnb(rio_t *rp, void *usrbuf, size_t n)
 /* $begin rio_readlineb */
 ssize_t rio_readlineb(rio_t *rp, void *usrbuf, size_t maxlen) 
 {
-    int n, rc;
+    unsigned long n, rc;
     char c, *bufp = usrbuf;
 
     for (n = 1; n < maxlen; n++) { 

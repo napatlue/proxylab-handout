@@ -25,10 +25,14 @@ struct cache_node *Insert_atfront(char *key,char *data)
     printf("\n\nbegin writer Lock at Insert Node Malloc\n");
     {
         node = Malloc(sizeof(struct cache_node));
-    
+        
         node->next = NULL;
-        node->key = key;
-        node->data = data;
+        //node->key = key;
+        node->key = Malloc(strlen(key));
+        memcpy(node->key,key,strlen(key));
+        //node->data = data;
+        node->data = Malloc(strlen(data));
+        memcpy(node->data,data,strlen(data));
     }
     pthread_rwlock_unlock(&lock);
     printf("\n\nend writer Lock at Insert Node Malloc\n");
@@ -64,7 +68,7 @@ struct cache_node *Insert_node_atfront(struct cache_node *node)
     {
         //printf("cache full: current size = %ld, node size = %ld\n\n",current_size,strlen(node->data));
         Remove_atTail();
-        print_cache();
+        //print_cache();
     }
     
     
@@ -76,7 +80,7 @@ struct cache_node *Insert_node_atfront(struct cache_node *node)
     pthread_rwlock_unlock(&lock);
      printf("\n\nend writer Lock at Insert Node\n");
     
-    print_cache();
+    //print_cache();
     return node;
 }
 
@@ -99,18 +103,20 @@ struct cache_node *Remove_atTail()
     
     if(prev != NULL)
     {
+        free(prev->next);
         prev->next = NULL; //remove current node which is the last node on list
     }
     else //only head node so we remove head
     {
+        free(head);
         head = NULL;
     }
     
-    print_cache();
+    //print_cache();
     return prev; //return tail
 }
 
-char* Get_data(char* key){
+char *Get_data(char* key){
     
     if(key == NULL)
     {
@@ -120,18 +126,19 @@ char* Get_data(char* key){
     
     pthread_rwlock_rdlock (&lock);
     
-    printf("\n\nbegin Reader Lock at Get Data\n");
+    //printf("\n\nbegin Reader Lock at Get Data\n");
     
     struct cache_node *current = head;
     struct cache_node * result = NULL;
     struct cache_node * prev = NULL;
     
     //searching should use reader block
-    print_cache();
+    //print_cache();
     while(current != NULL)
     {
-        printf("\ncurr= %s, key=%s \n",current->key,key);
-        if(current->key != NULL && strcasecmp (key, current->key) == 0 )
+        printf("\ncurr=%s, key=%s \n",current->key,key);
+        printf("[%ld %ld]\n",strlen(key),strlen(current->key));
+        if(strcmp (key, current->key) == 0 )
         {
             printf("\n\n Match !!!!\n");
             result = current;
@@ -146,16 +153,17 @@ char* Get_data(char* key){
     }
     
     pthread_rwlock_unlock(&lock);
-    printf("\n\nEnd Reader Lock at Get Data\n");
+    //printf("\n\nEnd Reader Lock at Get Data\n");
     if(result == NULL)
     {
+        //data = NULL;
         return NULL;
     }
     
     //this area modify cache, should use writer block
     
     pthread_rwlock_wrlock(&lock);
-    printf("\n\nbegin Writer Lock at Get Data\n");
+    //printf("\n\nbegin Writer Lock at Get Data\n");
     //delete this node from list
     /*if(result == head) //head of the list
     {
@@ -163,12 +171,12 @@ char* Get_data(char* key){
     }*/
     if(result != head)
     {
-        printf("\n\nResult is not Head\n");
+        //printf("\n\nResult is not Head\n");
         prev->next = result->next;
         current_size -= strlen(result->data);
         //move node to front
         pthread_rwlock_unlock(&lock);
-        printf("\n\nEnd Writer Lock at Get Data\n");
+        //printf("\n\nEnd Writer Lock at Get Data\n");
         
         
         Insert_node_atfront(result);
@@ -176,16 +184,19 @@ char* Get_data(char* key){
         
     }
     else{
-        printf("\n\nResult is Head\n");
+        //printf("\n\nResult is Head\n");
         pthread_rwlock_unlock(&lock);
-        printf("\n\nEnd Writer Lock at Get Data\n");
+        //printf("\n\nEnd Writer Lock at Get Data\n");
         
     }
     print_cache();
-    printf("\n\result: %p\n",result);
-    printf("\n\ndata: %s\n",result->data);
-    printf("\n\ndata lenght: %ld\n",strlen(result->data));
-    return result->data;
+    //printf("\n\result: %p\n",result);
+    //sprintf("\n\ndata: %s\n",result->data);
+    //printf("\n\ndata lenght: %ld\n",strlen(result->data));
+    
+    char *data = Malloc(strlen(result->data));
+    strcpy(data, result->data);
+    return data;
 }
 
 

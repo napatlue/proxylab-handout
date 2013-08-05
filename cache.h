@@ -18,7 +18,7 @@ struct cache_node
 
 pthread_rwlock_t lock;
 
-char* Get_data(char* key);
+char *Get_data(char* key);
 struct cache_node *Insert_atfront(char* key, char *data);
 struct cache_node *Insert_node_atfront(struct cache_node *node);
 struct cache_node *Remove_atTail();

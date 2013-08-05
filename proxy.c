@@ -1,7 +1,7 @@
 /*
  * Author: Napat Luevisadpaibul
  * Andrew Id: nluevisa
- * Proxy with no cache version 
+ * Proxy with cache version 
  */
 
 #include <stdio.h>
@@ -218,8 +218,7 @@ void* thread(void* vargp)
  */
 void doit(int clientfd)
 {
-	//int cache_hit = 0;
-    print_cache();
+
     rio_t rio_client, rio_server;
 	
 	char buf[MAXLINE], method[10], url[MAXLINE], uri[MAXLINE];
@@ -232,10 +231,9 @@ void doit(int clientfd)
 	char request_header[MAXLINE] = ""; // header bulit by proxy that will be sent to server
 	char request_port[10] = ""; // client assigns a port
 
-	//char save_buf[MAX_OBJECT_SIZE + 1] = ""; // save temp_data from server, no bigger than MAX_OBJ_SIZE
+
 	int serverfd, port;
-	//int read_size;
-	//int statusCode, contentLength;
+
     int exceed;
 	
     /* Read request from client */
@@ -261,9 +259,10 @@ void doit(int clientfd)
     dbg_printf("URL:%s \n",url);
     
     dbg_printf("------search in cache with key %s\n",url);
-    fprintf(stderr ,"bf get data\n");
-    print_cache();
-    data_cache=Get_data(url);
+    //fprintf(stderr ,"bf get data\n");
+    //print_cache();
+    data_cache = Get_data(url);
+    
     if(data_cache != NULL && strlen(data_cache) != 0)
     {
         
@@ -274,6 +273,8 @@ void doit(int clientfd)
 
         
         Rio_writen_wrapper(clientfd, data_cache, strlen(data_cache));
+        
+        free(data_cache);
     }
 	else // if not cache hit, proxy connect to server, receive and build cache block
 	{
@@ -316,18 +317,15 @@ void doit(int clientfd)
         
         if(!exceed) //within maximum object size, insert data to cache
         {
-             dbg_printf("-------------With in maximum object size\n\n");
+            dbg_printf("-------------With in maximum object size\n\n");
             dbg_printf("-------------url%s",url);
             dbg_printf("-------------Object%s",object);
-            fprintf(stderr ,"-------------url%s",url);
-            fprintf(stderr ,"-------------Object%ld",strlen(object));
+   
             Insert_atfront(url, object);
-            print_cache();
-            fprintf(stderr ,"end cache miss");
+            //print_cache();
+         
         }
         
-        print_cache();
-        fprintf(stderr ,"bf close serverfd");
 		Close(serverfd);
 	}
 
